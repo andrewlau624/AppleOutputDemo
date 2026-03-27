@@ -1,8 +1,10 @@
 streamlit
 
-transformers==4.57.0
-torch
+transformers>=5.0.0
+torch>=2.0.0
 torchvision
+timm
+
 accelerate
 einops
 sentencepiece

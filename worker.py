@@ -1,63 +1,69 @@
 import torch
-import torch.nn.functional as F
 from PIL import Image
 from torchvision import transforms
-from transformers import AutoModel
-
+from transformers import AutoConfig, AutoModel, AutoFeatureExtractor
+import numpy as np
 
 class QAlignWorker:
     def __init__(self):
-        self.model_id = "Lee1219/iqatr-musique"
-        self.model = AutoModel.from_pretrained(self.model_id)
+        self.model_id = "WT-MM/vit-base-blur"
+
+        config = AutoConfig.from_pretrained(
+            self.model_id,
+            trust_remote_code=True
+        )
+
+        self.model = AutoModel.from_pretrained(
+            self.model_id,
+            config=config,
+            trust_remote_code=True,
+            torch_dtype="auto"
+        )
+
         self.model.eval()
         self.preprocess = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5],
+                                 std=[0.5, 0.5, 0.5]),
         ])
 
     def eval_rule(self, observed: float, rule: dict) -> dict:
         """
-        Maps raw BERT signals to a 0.0 - 1.0 Quality Score.
+        Inverse Sigmoid for Blurry-High/Clear-Low signals.
         """
+        k = -150
+        x0 = 0.650
 
-        val_min = -0.010
-        val_max = 0.005
+        normalized_score = 1 / (1 + np.exp(-k * (observed - x0)))
 
-        normalized_score = (observed - val_min) / (val_max - val_min)
-
-        normalized_score = max(0.0, min(1.0, normalized_score))
-
+        quality_index = float(normalized_score)
         threshold = rule.get("threshold", 0.5)
-        operator = rule.get("operator", ">=")
-
-        ops = {
-            ">=": lambda a, b: a >= b, ">": lambda a, b: a > b,
-            "<=": lambda a, b: a <= b, "<": lambda a, b: a < b, "==": lambda a, b: a == b
-        }
-
-        is_passed = ops.get(operator, lambda a, b: False)(normalized_score, threshold)
 
         return {
-            "is_passed": is_passed,
-            "quality_index": round(normalized_score, 4),
-            "applied_operator": operator,
-            "applied_threshold": threshold,
-            "raw_signal": round(observed, 6)
+            "is_passed": quality_index >= threshold,
+            "quality_index": round(quality_index, 4),
+            "raw_signal": round(observed, 6),
+            "status": "APPROVED" if quality_index >= threshold else "REJECTED"
         }
 
-    def get_signal(self, pil_image: Image, rule: dict) -> dict:
+    def get_signal(self, pil_image: Image.Image, rule: dict) -> dict:
+        # Preprocess image to tensor [1, 3, 224, 224]
         img_tensor = self.preprocess(pil_image).unsqueeze(0)
-        patches = F.unfold(img_tensor, kernel_size=16, stride=16)
-        inputs_bert = patches.transpose(1, 2)
 
+        # Forward pass using pixel_values
         with torch.no_grad():
-            outputs = self.model(inputs_embeds=inputs_bert)
-            raw_score = float(outputs.last_hidden_state.mean().item())
+            outputs = self.model(pixel_values=img_tensor)
+            cls_repr = outputs.last_hidden_state[:, 0, :]
+
+            peak = cls_repr.max().item()
+            avg = cls_repr.mean().item()
+
+            raw_score = abs(peak - avg)
 
         validation = self.eval_rule(raw_score, rule)
 
-        status = "APPROVED" if validation["is_passed"] else "REJECTED"
+        status = "APPROVED" if validation.get("is_passed", False) else "REJECTED"
 
         return {
             "id": "gen-uuid-placeholder",
@@ -65,14 +71,14 @@ class QAlignWorker:
             "isValidated": True,
             "status": status,
             "cloudLocation": "s3://apple-vision-data/ingest/sample_01.jpg",
-            "rulesPassed": ["iqatr_quality_check"] if validation["is_passed"] else [],
+            "rulesPassed": ["iqatr_quality_check"] if validation.get("is_passed", False) else [],
             "rawOutputs": {
-                "quality_index": validation["quality_index"],
-                "raw_bert_signal": validation["raw_signal"]
+                "quality_index": validation.get("quality_index", None),
+                "raw_signal": validation.get("raw_signal", raw_score)
             },
             "metadata": {
                 "model_id": self.model_id,
-                "threshold_applied": rule["threshold"]
+                "threshold_applied": rule.get("threshold")
             },
             "collectionId": "col_spring_2026",
             "llmJudgeApplied": False
