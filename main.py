@@ -14,17 +14,17 @@ def get_worker():
     return QAlignWorker()
 
 
-# --- Header ---
+# Header
 st.title("Data Validation Gateway")
 st.caption("Agentic Data Validation System | Model: IQATR-Musique")
 
-# --- Sidebar ---
+# Sidebar
 with st.sidebar:
     st.header("Validation Contract")
     threshold = st.slider("Quality Threshold (0-1)", 0.0, 1.0, 0.45, 0.01)
     op = st.selectbox("Operator", [">=", ">", "<=", "<", "=="])
 
-# --- Ingest ---
+# Ingest
 uploaded_file = st.file_uploader("Select Image Payload", type=["jpg", "png", "jpeg"])
 
 if uploaded_file:
@@ -42,15 +42,13 @@ if uploaded_file:
 
         with st.spinner("Analyzing..."):
             worker = get_worker()
-            # This follows your Prisma schema
+
             db_record = worker.get_signal(img, current_rule)
 
-            # Fill in the ID and timestamps for the demo push
             db_record["id"] = str(uuid.uuid4())
             db_record["createdAt"] = datetime.now().isoformat()
             db_record["updatedAt"] = datetime.now().isoformat()
 
-        # Native Streamlit Status Indicators
         if db_record["status"] == "APPROVED":
             st.success(f"STATUS: {db_record['status']}")
             st.metric("Quality Score", f"{db_record['rawOutputs']['quality_index']:.4f}")
@@ -60,7 +58,7 @@ if uploaded_file:
 
         st.divider()
 
-        # --- Database Logic Visualization ---
+        # Database Logic Visualization
         st.subheader("Database Transaction")
         with st.status("Pushing to Prisma...", expanded=True) as status:
             st.write(f"Validated: {db_record['isValidated']}")
@@ -68,7 +66,7 @@ if uploaded_file:
             st.code(f"UPSERT ImageValidation WHERE id = {db_record['id'][:8]}", language="sql")
             status.update(label="Transaction Complete", state="complete")
 
-        # --- Manifest View ---
+        # Manifest View
         with st.expander("View Prisma JSON Object"):
             st.json(db_record)
 
