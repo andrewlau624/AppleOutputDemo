@@ -16,7 +16,7 @@ def get_worker():
 
 # --- Header ---
 st.title("Data Validation Gateway")
-st.caption("Agentic Data Validation System | Prototype v1.2")
+st.caption("Agentic Data Validation System | Model: IQATR-Musique")
 
 # --- Sidebar ---
 with st.sidebar:
